@@ -1,49 +1,36 @@
-import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { api, money } from "../api.js";
+import { money } from "../api.js";
 import { useAuth } from "../context/AuthContext.jsx";
 import { useCart } from "../context/CartContext.jsx";
+import { useToast } from "../context/ToastContext.jsx";
 
 export default function Cart() {
-  const { items, setQty, remove, clear, total } = useCart();
+  const { items, loading, setQty, remove, clear, total } = useCart();
   const { user } = useAuth();
+  const toast = useToast();
   const navigate = useNavigate();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [done, setDone] = useState(false);
 
-  const checkout = async () => {
-    if (!user) return navigate("/login", { state: { from: "/cart" } });
-    setBusy(true);
-    setError("");
+  const run = (fn) => async () => {
     try {
-      await api.createOrder(items);
-      clear();
-      setDone(true);
+      await fn();
     } catch (e) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
+      toast(e.message, "error");
     }
   };
 
-  if (done)
-    return (
-      <div className="panel">
-        <h1>Order placed</h1>
-        <p>Thank you! You can follow it under your orders.</p>
-        <Link to="/orders" className="btn">
-          View my orders
-        </Link>
-      </div>
-    );
+  const checkout = () => {
+    if (!user) navigate("/login", { state: { from: "/checkout" } });
+    else navigate("/checkout");
+  };
+
+  if (loading && items.length === 0) return <p className="muted">Loading your cart...</p>;
 
   if (items.length === 0)
     return (
       <>
         <h1>Your cart</h1>
         <p className="muted">Your cart is empty.</p>
-        <Link to="/" className="btn">
+        <Link to="/products" className="btn">
           Browse products
         </Link>
       </>
@@ -51,24 +38,33 @@ export default function Cart() {
 
   return (
     <>
-      <h1>Your cart</h1>
+      <div className="row between">
+        <h1>Your cart</h1>
+        <button className="link" onClick={run(clear)}>
+          Empty cart
+        </button>
+      </div>
       <div className="list">
         {items.map((i) => (
           <div key={i.id} className="line">
             {i.image ? <img src={i.image} alt="" /> : <div className="noimg small" />}
             <div className="grow">
-              <strong>{i.name}</strong>
+              <Link to={`/products/${i.id}`}>
+                <strong>{i.name}</strong>
+              </Link>
               <div className="muted">{money(i.price)}</div>
             </div>
-            <input
-              type="number"
-              min="1"
-              className="qty"
-              value={i.qty}
-              onChange={(e) => setQty(i.id, Number(e.target.value) || 1)}
-            />
+            <div className="stepper">
+              <button onClick={run(() => setQty(i.id, i.qty - 1))} aria-label="Decrease">
+                -
+              </button>
+              <span>{i.qty}</span>
+              <button onClick={run(() => setQty(i.id, i.qty + 1))} disabled={i.stock != null && i.qty >= i.stock} aria-label="Increase">
+                +
+              </button>
+            </div>
             <div className="sub">{money(i.price * i.qty)}</div>
-            <button className="link" onClick={() => remove(i.id)}>
+            <button className="link" onClick={run(() => remove(i.id))}>
               Remove
             </button>
           </div>
@@ -78,9 +74,8 @@ export default function Cart() {
         <strong>Total</strong>
         <strong>{money(total)}</strong>
       </div>
-      {error && <p className="error">{error}</p>}
-      <button className="btn" onClick={checkout} disabled={busy}>
-        {busy ? "Placing order..." : user ? "Place order" : "Log in to checkout"}
+      <button className="btn" onClick={checkout}>
+        {user ? "Proceed to checkout" : "Log in to checkout"}
       </button>
     </>
   );

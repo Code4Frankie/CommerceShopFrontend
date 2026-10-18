@@ -1,5 +1,5 @@
-import { createContext, useContext, useState } from "react";
-import { api, getToken, setToken } from "../api.js";
+import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { api, getToken, setToken, setUnauthorizedHandler } from "../api.js";
 
 const AuthContext = createContext(null);
 export const useAuth = () => useContext(AuthContext);
@@ -12,39 +12,57 @@ const readUser = () => {
     return null;
   }
 };
+const writeUser = (u) => {
+  try {
+    u ? localStorage.setItem(USER_KEY, JSON.stringify(u)) : localStorage.removeItem(USER_KEY);
+  } catch {
+    /* storage unavailable */
+  }
+};
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => (getToken() ? readUser() : null));
 
-  const finish = (data) => {
-    const token = data.token || data.accessToken;
-    if (!token) throw new Error("Server did not return a token.");
-    const u = data.user || { name: data.name, email: data.email };
-    setToken(token);
-    try {
-      localStorage.setItem(USER_KEY, JSON.stringify(u));
-    } catch {
-      /* ignore */
-    }
+  const updateUser = useCallback((u) => {
     setUser(u);
-  };
+    writeUser(u);
+  }, []);
 
-  const login = async (creds) => finish(await api.login(creds));
-  const register = async (details) => {
-    const data = await api.register(details);
-    // Some backends log you in on register, others don't.
-    if (data.token || data.accessToken) finish(data);
-    else await login({ email: details.email, password: details.password });
-  };
-  const logout = () => {
+  const logout = useCallback(() => {
     setToken(null);
-    try {
-      localStorage.removeItem(USER_KEY);
-    } catch {
-      /* ignore */
-    }
+    writeUser(null);
     setUser(null);
-  };
+  }, []);
 
-  return <AuthContext.Provider value={{ user, login, register, logout }}>{children}</AuthContext.Provider>;
+  // register and login both answer { success, token, user }
+  const finish = (data) => {
+    if (!data.token) throw new Error("The server did not return a token.");
+    setToken(data.token);
+    updateUser(data.user);
+  };
+  const login = async (creds) => finish(await api.login(creds));
+  const register = async (details) => finish(await api.register(details));
+
+  // An expired or invalid token anywhere signs the user out.
+  useEffect(() => {
+    setUnauthorizedHandler(logout);
+  }, [logout]);
+
+  // Refresh the profile (and role) on load.
+  useEffect(() => {
+    if (!getToken()) return;
+    api
+      .me()
+      .then((d) => {
+        const u = d.user || d.data;
+        if (u) updateUser(u);
+      })
+      .catch(() => {});
+  }, [updateUser]);
+
+  return (
+    <AuthContext.Provider value={{ user, login, register, logout, updateUser, isAdmin: user?.role === "admin" }}>
+      {children}
+    </AuthContext.Provider>
+  );
 }
